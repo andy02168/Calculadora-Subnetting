@@ -1,0 +1,304 @@
+#!/bin/bash
+clear
+echo "========= MENÚ SUBNETTING =========="
+echo "    1. Subnetting Fijo"
+echo "    2. Sebnetting Variable"
+echo "    3. Salir del menú"
+echo "===================================="
+read -p "Eliga una opción: " op
+case $op in
+#Hacemos subnetting fijo
+1)
+clear
+#!/bin/bash
+
+#-------- FUNCIONES AUXILIARES ---------
+
+# Función para validar su una dirección IP tiene formato correcto
+validar_ip() {
+    local ip=$1
+
+   #Comprueba que tenga el formato correcto con 3 puntos y número
+    if [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        #Separa los actetos en un array
+        IFS='.' read -r -a octetos <<< "$ip"
+        #Comrprubea que cada octeto esté entre 0 y 255
+        for octeto in "${octetos[@]}"; do
+            if (( octeto < 0 || octeto > 255 )); then
+                return 1
+            fi
+        done
+        return 0
+    fi
+    return 1
+}
+
+#Función para validar una máscara en notación CIDR (entre 0 y 32)
+validar_cidr() {
+    local cidr=$1
+    [[ $cidr =~ ^([0-9]|[1-2][0-9]|3[0-2])$ ]] && return 0 || return 1
+}
+
+#Función para convertir una dirección IP en entero (para operar matemáticamente)
+ip_a_entero() {
+    IFS='.' read -r o1 o2 o3 o4 <<< "$1"
+    echo $(( (o1 << 24) + (o2 << 16) + (o3 << 8) + o4 ))
+}
+
+#Función para convertir de entero a formato IP (dirección legible)
+entero_a_ip() {
+    local ip_int=$1
+    echo "$(( (ip_int >> 24) & 255 )).$(( (ip_int >> 16) & 255 )).$(( (ip_int >> 8) & 255 )).$(( ip_int & 255 ))"
+}
+
+#--------- ENTRADA DE DATOS ---------
+#Solicita la dirección red al usuario
+read -p "Introduce la dirección de red (ej: 192.168.1.0): " red_base
+
+#SOlicita la máscara en formato CIDR
+read -p "Introduce la máscara CIDR (ej: 24): " cidr_base
+
+#Pide cuántas subredes desea crear
+read -p "Introduce el número de subredes deseadas: " num_subredes
+
+#-------- VALIDACIÓN DE ENTRADAS ---------
+#Validar IP
+if ! validar_ip "$red_base"; then
+    echo "❌ Dirección IP inválida."
+    exit 1
+fi
+
+#Validar máscara CIDR
+if ! validar_cidr "$cidr_base"; then
+    echo "❌ Máscara CIDR inválida. Debe estar entre 0 y 32."
+    exit 1
+fi
+
+#Validar que el número de subredes sea un número mayor o igual a 1
+if ! [[ "$num_subredes" =~ ^[0-9]+$ ]] || (( num_subredes < 1 )); then
+    echo "❌ Número de subredes inválido."
+    exit 1
+fi
+
+#------- CÁLCULO DE NUEVA MÁSCARA ---------
+# Calcular cuántos bits adicionales se necesitan para dividir en subredes
+bits_necesarios=0
+while (( 2**bits_necesarios < num_subredes )); do
+    ((bits_necesarios++))
+done
+
+#Sumar esos bits a la máscara original
+nueva_cidr=$((cidr_base + bits_necesarios))
+
+#Si la nueva máscara supera los 32 bits, es imposible
+if (( nueva_cidr > 32 )); then
+    echo "❌ No se pueden crear $num_subredes subredes desde /$cidr_base (supera los 32 bits)."
+    exit 1
+fi
+
+#Calcular el número de direcciones por subred
+hosts_por_subred=$((2**(32 - nueva_cidr)))
+
+#Calcular cuántos hosts usables (restando red y broadcast)
+usable_hosts=$((hosts_por_subred - 2))
+
+#------- MOSTRAR RESULTADO GENERAL --------
+echo -e "\n📌 Subnetting: $num_subredes subredes desde $red_base/$cidr_base"
+echo "Nueva máscara CIDR: /$nueva_cidr"
+echo "Hosts por subred: $usable_hosts (de $hosts_por_subred totales)"
+
+#------- GENERACIÓN DE SUBREDES --------
+echo -e "\n📊 SUBREDES:"
+
+#Convertimos la IP base a formato entero para poder sumarle
+ip_entero=$(ip_a_entero "$red_base")
+
+#Bucle que genera y muestra cada subred
+for (( i=0; i<num_subredes; i++ )); do
+    #Calcula la primera IP de esta subred
+    inicio=$(( ip_entero + (i * hosts_por_subred) ))
+
+    #Calcula la última IP de esta subred
+    fin=$(( inicio + hosts_por_subred - 1 ))
+
+    #Convertimos inicio y fin de nuevo a formato IP
+    red=$(entero_a_ip "$inicio")
+    broadcast=$(entero_a_ip "$fin")
+
+    #Si no hay suficientes hosts, avisamos
+    if (( usable_hosts < 1 )); then
+        rango="No hay hosts disponibles"
+    else
+        #Mostramos rango usable (dede IP+1 hasta broadcast-1)
+        first_host=$(entero_a_ip $((inicio + 1)))
+        last_host=$(entero_a_ip $((fin - 1)))
+        rango="$first_host - $last_host"
+    fi
+
+    #Mostramos los datos de esta subred
+    echo -e "\n🔸 Subred $((i+1)):"
+    echo "   Dirección de red:     $red"
+    echo "   Broadcast:            $broadcast"
+    echo "   Rango de hosts:       $rango"
+done
+;;
+#Hacemos subnetting variable
+2)
+clear
+#!/bin/bash
+
+#------- FUNCIONES AUXILIARES -------
+
+# Función para validar que una IP tiene formato correcto
+validar_ip() {
+    local ip=$1
+    [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    IFS='.' read -r -a octetos <<< "$ip"
+    for octeto in "${octetos[@]}"; do
+        ((octeto >= 0 && octeto <= 255)) || return 1
+    done
+    return 0
+}
+
+#Valida si el valor CIDR está entre 0 y 32
+validar_cidr() {
+    [[ $1 =~ ^([0-9]|[1-2][0-9]|3[0-2])$ ]] && return 0 || return 1
+}
+
+#Convierte una IP a nñumero entero para facilitar cálculos
+ip_a_entero() {
+    IFS='.' read -r o1 o2 o3 o4 <<< "$1"
+    echo $(( (o1 << 24) + (o2 << 16) + (o3 << 8) + o4 ))
+}
+
+#onvierte un número entero a IP legible
+entero_a_ip() {
+    local ip=$1
+    echo "$(( (ip >> 24) & 255 )).$(( (ip >> 16) & 255 )).$(( (ip >> 8) & 255 )).$(( ip & 255 ))"
+}
+
+#Calcula el CIDR mínimo necesario para alojar una cantidad de hosts
+hosts_a_cidr() {
+    local h=$1
+    for ((i=32; i>=0; i--)); do
+        if (( 2**(32 - i) - 2 >= h )); then
+            echo "$i"
+            return
+        fi
+    done
+}
+
+#Convierte un CIDR en una máscara en formato decimal
+cidr_a_mascara() {
+    local cidr=$1
+    local mask_bin=$(printf '%*s' "$cidr" | tr ' ' '1') #Llena de 1s según el CIDR
+    mask_bin=$(printf "%-032s" "$mask_bin" | tr ' ' '0') # Rellena con ceros hasata 32 bits
+    for i in {0..3}; do
+        echo -n "$((2#${mask_bin:i*8:8}))" #Convierte cada grupo de 8 bits a decimal
+        [[ $i -lt 3 ]] && echo -n "."
+    done
+    echo
+}
+
+#------- ENTRADA DE DATOS -------
+
+#Se piden los datos necesarios al usuario
+read -p "Introduce la red base (ej: 192.168.1.0): " red_base
+read -p "Introduce la máscara inicial en CIDR (ej: 24): " cidr_base
+read -p "¿Cuántas subredes necesitas?: " num_subredes
+
+#------- VALIDACIÓN DE ENTRADAS --------
+
+#Comprueba que la IP sea válida
+if ! validar_ip "$red_base"; then
+    echo "❌ Dirección IP inválida."
+    exit 1
+fi
+
+#Comprueba que el CIDR sea válido
+if ! validar_cidr "$cidr_base"; then
+    echo "❌ CIDR inválido."
+    exit 1
+fi
+
+#Comprueba que el número de subredes sea un número entero positivo
+if ! [[ $num_subredes =~ ^[0-9]+$ ]]; then
+    echo "❌ Número de subredes inválido."
+    exit 1
+fi
+
+#-------- SOLICITUD DE HOSTS POR SUBRED --------
+
+#Creamos un array para guardar los requerimientos de cada subred
+declare -a hosts_requeridos
+
+#Se pide al usuario cuántos hosts necesita en cada subred
+for ((i = 1; i <= num_subredes; i++)); do
+    read -p "→ Hosts necesarios para la subred $i: " h
+    if ! [[ $h =~ ^[0-9]+$ && $h -ge 1 ]]; then
+        echo "❌ Número de hosts inválido."
+        exit 1
+    fi
+    hosts_requeridos+=($h)
+done
+
+#------ ORDENAR LOS REQUERIMIENTOS DE MAYOR A MENOR --------
+
+#Esto es clave en VLSM: asignamos primero las subredes más grandes
+IFS=$'\n' sorted=($(sort -nr <<<"${hosts_requeridos[*]}"))
+unset IFS
+
+#------ CÁLCULO DE SUBREDES VLSM
+
+echo -e "\n📊 RESULTADO DEL SUBNETTING VLSM:"
+
+#Convertimos la IP base a entero para poder trabajarla
+ip_actual=$(ip_a_entero "$red_base")
+
+#Calculamos el total de direcciones disponibles en la red base
+total_hosts_disponibles=$((2**(32 - cidr_base)))
+
+#Recorremos los requerimiento y calculamos cada subred
+for ((i = 0; i < num_subredes; i++)); do
+    h=${sorted[$i]} #Número de hosts solicitados para essta subred
+    cidr_subred=$(hosts_a_cidr "$h") #Calculamos el CIDR para esa cantidad
+    hosts_totales=$((2**(32 - cidr_subred))) #Hosts totales disponibles con ese CIDR
+    usable_hosts=$((hosts_totales - 2)) #Quitamos red y broadcast
+
+    red=$(entero_a_ip "$ip_actual") #Dirección de red actual
+    broadcast=$((ip_actual + hosts_totales - 1))
+    broadcast_ip=$(entero_a_ip "$broadcast") #IP de broadcast de esta subred
+
+    #Si no hay hosts disponibles (posible si CIDR > 30)
+    if (( usable_hosts < 1 )); then
+        rango="No hay hosts disponibles"
+    else
+        #Rango de IPs usables
+        rango="$(entero_a_ip $((ip_actual + 1))) - $(entero_a_ip $((broadcast - 1)))"
+    fi
+
+    #Mostramos los resultados de esta subred
+    echo -e "\n🔹 Subred $((i + 1))"
+    echo "   Hosts requeridos:     $h"
+    echo "   Dirección de red:     $red"
+    echo "   Máscara CIDR:         /$cidr_subred"
+    echo "   Máscara decimal:      $(cidr_a_mascara "$cidr_subred")"
+    echo "   Broadcast:            $broadcast_ip"
+    echo "   Rango de hosts:       $rango"
+    echo "   Hosts disponibles:    $usable_hosts"
+
+    #Avanzamos a la siguiente IP libre
+    ip_actual=$((broadcast + 1))
+done
+;;
+#Salimos del menú
+3)
+clear
+echo "Saliendo..."
+sleep 2
+clear
+exit
+;;
+*) echo "Opción incorrecta"
+;;
+esac
